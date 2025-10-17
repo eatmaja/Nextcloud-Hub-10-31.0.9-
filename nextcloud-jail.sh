@@ -16,7 +16,7 @@ fi
 #
 #####
 
-# Initialize defaults
+NEXTCLOUD_VERSION="31"
 JAIL_IP=""
 JAIL_INTERFACES=""
 DEFAULT_GW_IP=""
@@ -34,44 +34,48 @@ CONFIG_PATH=""
 THEMES_PATH=""
 STANDALONE_CERT=0
 SELFSIGNED_CERT=0
-DNS_CERT=0
-NO_CERT=0
-CERT_EMAIL=""
-DL_FLAGS=""
-DNS_SETTING=""
-CONFIG_NAME="nextcloud-config"
-NEXTCLOUD_VERSION="30"
-COUNTRY_CODE="US"
-JAIL_BASEJAIL="false"
-PGP_KEYSERVER="pgpkeys.eu"
-# Will not work with keys.openpgp.org because GPG requires keys to have a user ID, however, Nextcloud have not authenticated their key on openpgp.
-NEXTCLOUD_PGP_KEYID="28806A878AE423A28372792ED75899B9A724937A"
-MX_WINDOW="5"
 
-# Check for nextcloud-config and set configuration
-SCRIPT=$(readlink -f "$0")
-SCRIPTPATH=$(dirname "${SCRIPT}")
-if ! [ -e "${SCRIPTPATH}"/"${CONFIG_NAME}" ]; then
-  echo "${SCRIPTPATH}/${CONFIG_NAME} must exist."
-  exit 1
-fi
-. "${SCRIPTPATH}"/"${CONFIG_NAME}"
-INCLUDES_PATH="${SCRIPTPATH}"/includes
+#####
+#
+# Directory Creation and Mounting
+#
+#####
 
-ADMIN_PASSWORD=$(openssl rand -base64 12)
-DB_ROOT_PASSWORD=$(openssl rand -base64 16)
-DB_PASSWORD=$(openssl rand -base64 16)
+# Clean up content in folders for clean install
+for DIR in "${DB_PATH}"/"${DATABASE}" "${FILES_PATH}" "${CONFIG_PATH}" "${THEMES_PATH}"; do
+  if [ -d "$DIR" ] && [ "$(ls -A "$DIR" 2>/dev/null)" ]; then
+    echo "Cleaning directory $DIR for clean install..."
+    rm -rf "$DIR"/*
+  fi
+done
+
+mkdir -p "${DB_PATH}"/"${DATABASE}"
+chown -R 88:88 "${DB_PATH}"/
+mkdir -p "${FILES_PATH}"
+chown -R 80:80 "${FILES_PATH}"
+mkdir -p "${CONFIG_PATH}"
+mkdir -p "${THEMES_PATH}"
+# Ports not currently used, Commented out for future use
+#mkdir -p "${PORTS_PATH}"/ports
+#mkdir -p "${PORTS_PATH}"/db
+iocage exec "${JAIL_NAME}" mkdir -p /mnt/files
 if [ "${DATABASE}" = "mariadb" ]; then
-  DB_NAME="MariaDB"
+  iocage exec "${JAIL_NAME}" mkdir -p /var/db/mysql
 elif [ "${DATABASE}" = "pgsql" ]; then
-  DB_NAME="PostgreSQL"
+  iocage exec "${JAIL_NAME}" mkdir -p /var/db/postgres
 fi
+iocage exec "${JAIL_NAME}" mkdir -p /mnt/includes
+iocage exec "${JAIL_NAME}" mkdir -p /mnt/files
+iocage exec "${JAIL_NAME}" mkdir -p /usr/local/www/nextcloud/config
+iocage exec "${JAIL_NAME}" mkdir -p /usr/local/www/nextcloud/themes
 
-RELEASE=$(freebsd-version | cut -d - -f -1)"-RELEASE"
-# If release is 13.3-RELEASE, change to 13.4-RELEASE
-if [ "${RELEASE}" = "13.3-RELEASE" ]; then
-  RELEASE="13.4-RELEASE"
-fi 
+# Ports not currently used, Commented out for future use
+#mkdir -p "${JAILS_MOUNT}"/jails/${JAIL_NAME}/root/var/db/portsnap
+#mkdir -p "${JAILS_MOUNT}"/jails/${JAIL_NAME}/root/usr/ports
+#iocage fstab -a "${JAIL_NAME}" "${PORTS_PATH}"/ports /usr/ports nullfs rw 0 0
+#iocage fstab -a "${JAIL_NAME}" "${PORTS_PATH}"/db /var/db/portsnap nullfs rw 0 0
+
+fi
 JAILS_MOUNT=$(zfs get -H -o value mountpoint $(iocage get -p)/iocage)
 
 #####
@@ -224,58 +228,78 @@ cat <<__EOF__ >/tmp/pkg.json
     "texinfo",
     "m4",
     "autoconf",
-    "php83",
-    "php83-ctype",
-    "php83-curl",
-    "php83-dom",
-    "php83-filter",
-    "php83-gd",
-    "php83-xml",
-    "php83-mbstring",
-    "php83-posix",
-    "php83-session",
-    "php83-simplexml",
-    "php83-xmlreader",
-    "php83-xmlwriter",
-    "php83-zip",
-    "php83-zlib",
-    "php83-fileinfo",
-    "php83-bz2",
-    "php83-intl",
-    "php83-ldap",
-    "php83-pecl-smbclient",
-    "php83-ftp",
-    "php83-imap",
-    "php83-bcmath",
-    "php83-gmp",
-    "php83-exif",
-    "php83-pecl-APCu",
-    "php83-pecl-memcache",
-    "php83-pecl-redis",
-    "php83-pecl-imagick",
-    "php83-pcntl",
-    "php83-phar",
-    "php83-iconv",
-    "php83-sodium",
-    "php83-sysvsem",
-    "php83-xsl",
-    "php83-opcache"
+  "php82",
+  "php82-ctype",
+  "php82-curl",
+  "php82-dom",
+  "php82-filter",
+  "php82-gd",
+  "php82-xml",
+  "php82-mbstring",
+  "php82-posix",
+  "php82-session",
+  "php82-simplexml",
+  "php82-xmlreader",
+  "php82-xmlwriter",
+  "php82-zip",
+  "php82-zlib",
+  "php82-fileinfo",
+  "php82-bz2",
+  "php82-intl",
+  "php82-ldap",
+  "php82-pecl-smbclient",
+  "php82-ftp",
+  "php82-imap",
+  "php82-bcmath",
+  "php82-gmp",
+  "php82-exif",
+  "php82-pecl-APCu",
+  "php82-pecl-memcache",
+  "php82-pecl-redis",
+  "php82-pecl-imagick",
+  "php82-pcntl",
+  "php82-phar",
+  "php82-iconv",
+  "php82-sodium",
+  "php82-sysvsem",
+  "php82-xsl",
+  "php82-opcache"
   ]
 }
 __EOF__
 
-# Create the jail and install previously listed packages
-if [ "${JAIL_BASEJAIL}" = "true" ]; then
-    JAIL_TYPE_OPTION="--basejail"
-    echo "Creating jail ${JAIL_NAME} as a Basejail, this can take a while..."
-else
-    JAIL_TYPE_OPTION=""
-    echo "Creating jail ${JAIL_NAME} as a normal (clone) jail..."
+
+# Check and delete existing jail named nextcloud before creating
+if iocage list | grep -q "^${JAIL_NAME}[[:space:]]"; then
+  echo "Jail with name ${JAIL_NAME} already exists. Deleting..."
+  iocage stop "${JAIL_NAME}" || true
+  iocage destroy -f "${JAIL_NAME}"
 fi
-if ! iocage create --name "${JAIL_NAME}" -p /tmp/pkg.json -r "${RELEASE}" ${JAIL_TYPE_OPTION:+"${JAIL_TYPE_OPTION}"} interfaces="${JAIL_INTERFACES}" ip4_addr="${INTERFACE}|${IP}/${NETMASK}" defaultrouter="${DEFAULT_GW_IP}" boot="on" host_hostname="${JAIL_NAME}" vnet="${VNET}"
+
+
+# Create the jail
+if [ "${JAIL_BASEJAIL}" = "true" ]; then
+  JAIL_TYPE_OPTION="--basejail"
+  echo "Creating jail ${JAIL_NAME} as a Basejail, this can take a while..."
+else
+  JAIL_TYPE_OPTION=""
+  echo "Creating jail ${JAIL_NAME} as a normal (clone) jail..."
+fi
+if ! iocage create --name "${JAIL_NAME}" -r "${RELEASE}" ${JAIL_TYPE_OPTION:+"${JAIL_TYPE_OPTION}"} interfaces="${JAIL_INTERFACES}" ip4_addr="${INTERFACE}|${IP}/${NETMASK}" defaultrouter="${DEFAULT_GW_IP}" boot="on" host_hostname="${JAIL_NAME}" vnet="${VNET}"
 then
-	echo "Failed to create jail"
-	exit 1
+  echo "Failed to create jail"
+  exit 1
+fi
+
+# Pastikan pkg up-to-date sebelum install package
+iocage exec "${JAIL_NAME}" env ASSUME_ALWAYS_YES=YES pkg bootstrap -f
+iocage exec "${JAIL_NAME}" pkg update -f
+
+# Install packages dari pkg.json
+if ! iocage exec "${JAIL_NAME}" pkg install -y $(jq -r '.pkgs[]' /tmp/pkg.json)
+then
+  echo "Failed to install required packages for Nextcloud."
+  exit 1
 fi
 rm /tmp/pkg.json
 
@@ -333,9 +357,9 @@ iocage exec "${JAIL_NAME}" chmod -R 770 /mnt/files
 #####
 
 if [ "${DATABASE}" = "mariadb" ]; then
-  iocage exec "${JAIL_NAME}" pkg install -y mariadb106-server php83-pdo_mysql php83-mysqli
+  iocage exec "${JAIL_NAME}" pkg install -y mariadb106-server php82-pdo_mysql php82-mysqli
 elif [ "${DATABASE}" = "pgsql" ]; then
-  iocage exec "${JAIL_NAME}" pkg install -y postgresql13-server php83-pgsql php83-pdo_pgsql
+  iocage exec "${JAIL_NAME}" pkg install -y postgresql13-server php82-pgsql php82-pdo_pgsql
 fi
 
 # Ports not currently used, Commented out for future use
