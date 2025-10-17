@@ -2,7 +2,18 @@
 # Build an iocage jail under FreeNAS 11.3-13.0 using the current release of Nextcloud 26
 # https://github.com/danb35/freenas-iocage-nextcloud
 
+
 set -x
+
+# --- Load configuration from file if exists ---
+CONFIG_FILE="./nextcloud-config"
+if [ -f "${CONFIG_FILE}" ]; then
+  . "${CONFIG_FILE}"
+  echo "Loaded configuration from ${CONFIG_FILE}"
+else
+  echo "ERROR: Configuration file ${CONFIG_FILE} not found. Please create it with required variables (POOL_PATH, JAIL_IP, HOST_NAME, etc)."
+  exit 1
+fi
 
 # Check for root privileges
 if ! [ $(id -u) = 0 ]; then
