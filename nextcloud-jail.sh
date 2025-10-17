@@ -16,6 +16,7 @@ fi
 #
 #####
 
+
 NEXTCLOUD_VERSION="31"
 JAIL_IP=""
 JAIL_INTERFACES=""
@@ -34,6 +35,33 @@ CONFIG_PATH=""
 THEMES_PATH=""
 STANDALONE_CERT=0
 SELFSIGNED_CERT=0
+
+# --- Dataset Path Auto-Setup ---
+# If POOL_PATH is not set, exit with clear message
+if [ -z "${POOL_PATH}" ]; then
+  echo "ERROR: POOL_PATH must be set to your main storage pool (e.g. /mnt/tank) before running this script."
+  exit 1
+fi
+
+# If DB_PATH, FILES_PATH, CONFIG_PATH, THEMES_PATH are not set, auto-set to recommended structure
+if [ -z "${DB_PATH}" ]; then
+  DB_PATH="${POOL_PATH}/nextcloud/db"
+fi
+if [ -z "${FILES_PATH}" ]; then
+  FILES_PATH="${POOL_PATH}/nextcloud/files"
+fi
+if [ -z "${CONFIG_PATH}" ]; then
+  CONFIG_PATH="${POOL_PATH}/nextcloud/config"
+fi
+if [ -z "${THEMES_PATH}" ]; then
+  THEMES_PATH="${POOL_PATH}/nextcloud/themes"
+fi
+
+echo "Using dataset paths:"
+echo "  DB_PATH:      ${DB_PATH}"
+echo "  FILES_PATH:   ${FILES_PATH}"
+echo "  CONFIG_PATH:  ${CONFIG_PATH}"
+echo "  THEMES_PATH:  ${THEMES_PATH}"
 
 #####
 #
