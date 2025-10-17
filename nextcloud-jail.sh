@@ -41,6 +41,13 @@ SELFSIGNED_CERT=0
 #
 #####
 
+
+# Validate required directory variables before proceeding
+if [ -z "${DB_PATH}" ] || [ -z "${FILES_PATH}" ] || [ -z "${CONFIG_PATH}" ] || [ -z "${THEMES_PATH}" ]; then
+  echo "ERROR: One or more required directory variables (DB_PATH, FILES_PATH, CONFIG_PATH, THEMES_PATH) are not set."
+  exit 1
+fi
+
 # Clean up content in folders for clean install
 for DIR in "${DB_PATH}"/"${DATABASE}" "${FILES_PATH}" "${CONFIG_PATH}" "${THEMES_PATH}"; do
   if [ -d "$DIR" ] && [ "$(ls -A "$DIR" 2>/dev/null)" ]; then
