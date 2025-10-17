@@ -2,18 +2,7 @@
 # Build an iocage jail under FreeNAS 11.3-13.0 using the current release of Nextcloud 26
 # https://github.com/danb35/freenas-iocage-nextcloud
 
-
 set -x
-
-# --- Load configuration from file if exists ---
-CONFIG_FILE="./nextcloud-config"
-if [ -f "${CONFIG_FILE}" ]; then
-  . "${CONFIG_FILE}"
-  echo "Loaded configuration from ${CONFIG_FILE}"
-else
-  echo "ERROR: Configuration file ${CONFIG_FILE} not found. Please create it with required variables (POOL_PATH, JAIL_IP, HOST_NAME, etc)."
-  exit 1
-fi
 
 # Check for root privileges
 if ! [ $(id -u) = 0 ]; then
@@ -27,8 +16,7 @@ fi
 #
 #####
 
-
-NEXTCLOUD_VERSION="31"
+# Initialize defaults
 JAIL_IP=""
 JAIL_INTERFACES=""
 DEFAULT_GW_IP=""
@@ -46,82 +34,44 @@ CONFIG_PATH=""
 THEMES_PATH=""
 STANDALONE_CERT=0
 SELFSIGNED_CERT=0
+DNS_CERT=0
+NO_CERT=0
+CERT_EMAIL=""
+DL_FLAGS=""
+DNS_SETTING=""
+CONFIG_NAME="nextcloud-config"
+NEXTCLOUD_VERSION="31.0.9"
+COUNTRY_CODE="US"
+JAIL_BASEJAIL="false"
+PGP_KEYSERVER="pgpkeys.eu"
+# Will not work with keys.openpgp.org because GPG requires keys to have a user ID, however, Nextcloud have not authenticated their key on openpgp.
+NEXTCLOUD_PGP_KEYID="28806A878AE423A28372792ED75899B9A724937A"
+MX_WINDOW="5"
 
-# --- Dataset Path Auto-Setup ---
-# If POOL_PATH is not set, exit with clear message
-if [ -z "${POOL_PATH}" ]; then
-  echo "ERROR: POOL_PATH must be set to your main storage pool (e.g. /mnt/tank) before running this script."
+# Check for nextcloud-config and set configuration
+SCRIPT=$(readlink -f "$0")
+SCRIPTPATH=$(dirname "${SCRIPT}")
+if ! [ -e "${SCRIPTPATH}"/"${CONFIG_NAME}" ]; then
+  echo "${SCRIPTPATH}/${CONFIG_NAME} must exist."
   exit 1
 fi
+. "${SCRIPTPATH}"/"${CONFIG_NAME}"
+INCLUDES_PATH="${SCRIPTPATH}"/includes
 
-# If DB_PATH, FILES_PATH, CONFIG_PATH, THEMES_PATH are not set, auto-set to recommended structure
-if [ -z "${DB_PATH}" ]; then
-  DB_PATH="${POOL_PATH}/nextcloud/db"
-fi
-if [ -z "${FILES_PATH}" ]; then
-  FILES_PATH="${POOL_PATH}/nextcloud/files"
-fi
-if [ -z "${CONFIG_PATH}" ]; then
-  CONFIG_PATH="${POOL_PATH}/nextcloud/config"
-fi
-if [ -z "${THEMES_PATH}" ]; then
-  THEMES_PATH="${POOL_PATH}/nextcloud/themes"
-fi
-
-echo "Using dataset paths:"
-echo "  DB_PATH:      ${DB_PATH}"
-echo "  FILES_PATH:   ${FILES_PATH}"
-echo "  CONFIG_PATH:  ${CONFIG_PATH}"
-echo "  THEMES_PATH:  ${THEMES_PATH}"
-
-#####
-#
-# Directory Creation and Mounting
-#
-#####
-
-
-# Validate required directory variables before proceeding
-if [ -z "${DB_PATH}" ] || [ -z "${FILES_PATH}" ] || [ -z "${CONFIG_PATH}" ] || [ -z "${THEMES_PATH}" ]; then
-  echo "ERROR: One or more required directory variables (DB_PATH, FILES_PATH, CONFIG_PATH, THEMES_PATH) are not set."
-  exit 1
-fi
-
-# Clean up content in folders for clean install
-for DIR in "${DB_PATH}"/"${DATABASE}" "${FILES_PATH}" "${CONFIG_PATH}" "${THEMES_PATH}"; do
-  if [ -d "$DIR" ] && [ "$(ls -A "$DIR" 2>/dev/null)" ]; then
-    echo "Cleaning directory $DIR for clean install..."
-    rm -rf "$DIR"/*
-  fi
-done
-
-mkdir -p "${DB_PATH}"/"${DATABASE}"
-chown -R 88:88 "${DB_PATH}"/
-mkdir -p "${FILES_PATH}"
-chown -R 80:80 "${FILES_PATH}"
-mkdir -p "${CONFIG_PATH}"
-mkdir -p "${THEMES_PATH}"
-# Ports not currently used, Commented out for future use
-#mkdir -p "${PORTS_PATH}"/ports
-#mkdir -p "${PORTS_PATH}"/db
-iocage exec "${JAIL_NAME}" mkdir -p /mnt/files
+ADMIN_PASSWORD=$(openssl rand -base64 12)
+DB_ROOT_PASSWORD=$(openssl rand -base64 16)
+DB_PASSWORD=$(openssl rand -base64 16)
 if [ "${DATABASE}" = "mariadb" ]; then
-  iocage exec "${JAIL_NAME}" mkdir -p /var/db/mysql
+  DB_NAME="MariaDB"
 elif [ "${DATABASE}" = "pgsql" ]; then
-  iocage exec "${JAIL_NAME}" mkdir -p /var/db/postgres
+  DB_NAME="PostgreSQL"
 fi
-iocage exec "${JAIL_NAME}" mkdir -p /mnt/includes
-iocage exec "${JAIL_NAME}" mkdir -p /mnt/files
-iocage exec "${JAIL_NAME}" mkdir -p /usr/local/www/nextcloud/config
-iocage exec "${JAIL_NAME}" mkdir -p /usr/local/www/nextcloud/themes
 
-# Ports not currently used, Commented out for future use
-#mkdir -p "${JAILS_MOUNT}"/jails/${JAIL_NAME}/root/var/db/portsnap
-#mkdir -p "${JAILS_MOUNT}"/jails/${JAIL_NAME}/root/usr/ports
-#iocage fstab -a "${JAIL_NAME}" "${PORTS_PATH}"/ports /usr/ports nullfs rw 0 0
-#iocage fstab -a "${JAIL_NAME}" "${PORTS_PATH}"/db /var/db/portsnap nullfs rw 0 0
-
-fi
+RELEASE=$(freebsd-version | cut -d - -f -1)"-RELEASE"
+# If release is 13.3-RELEASE, change to 13.4-RELEASE
+if [ "${RELEASE}" = "13.3-RELEASE" ]; then
+  RELEASE="13.4-RELEASE"
+fi 
 JAILS_MOUNT=$(zfs get -H -o value mountpoint $(iocage get -p)/iocage)
 
 #####
@@ -314,38 +264,18 @@ cat <<__EOF__ >/tmp/pkg.json
 }
 __EOF__
 
-
-# Check and delete existing jail named nextcloud before creating
-if iocage list | grep -q "^${JAIL_NAME}[[:space:]]"; then
-  echo "Jail with name ${JAIL_NAME} already exists. Deleting..."
-  iocage stop "${JAIL_NAME}" || true
-  iocage destroy -f "${JAIL_NAME}"
-fi
-
-
-# Create the jail
+# Create the jail and install previously listed packages
 if [ "${JAIL_BASEJAIL}" = "true" ]; then
-  JAIL_TYPE_OPTION="--basejail"
-  echo "Creating jail ${JAIL_NAME} as a Basejail, this can take a while..."
+    JAIL_TYPE_OPTION="--basejail"
+    echo "Creating jail ${JAIL_NAME} as a Basejail, this can take a while..."
 else
-  JAIL_TYPE_OPTION=""
-  echo "Creating jail ${JAIL_NAME} as a normal (clone) jail..."
+    JAIL_TYPE_OPTION=""
+    echo "Creating jail ${JAIL_NAME} as a normal (clone) jail..."
 fi
-if ! iocage create --name "${JAIL_NAME}" -r "${RELEASE}" ${JAIL_TYPE_OPTION:+"${JAIL_TYPE_OPTION}"} interfaces="${JAIL_INTERFACES}" ip4_addr="${INTERFACE}|${IP}/${NETMASK}" defaultrouter="${DEFAULT_GW_IP}" boot="on" host_hostname="${JAIL_NAME}" vnet="${VNET}"
+if ! iocage create --name "${JAIL_NAME}" -p /tmp/pkg.json -r "${RELEASE}" ${JAIL_TYPE_OPTION:+"${JAIL_TYPE_OPTION}"} interfaces="${JAIL_INTERFACES}" ip4_addr="${INTERFACE}|${IP}/${NETMASK}" defaultrouter="${DEFAULT_GW_IP}" boot="on" host_hostname="${JAIL_NAME}" vnet="${VNET}"
 then
-  echo "Failed to create jail"
-  exit 1
-fi
-
-# Pastikan pkg up-to-date sebelum install package
-iocage exec "${JAIL_NAME}" env ASSUME_ALWAYS_YES=YES pkg bootstrap -f
-iocage exec "${JAIL_NAME}" pkg update -f
-
-# Install packages dari pkg.json
-if ! iocage exec "${JAIL_NAME}" pkg install -y $(jq -r '.pkgs[]' /tmp/pkg.json)
-then
-  echo "Failed to install required packages for Nextcloud."
-  exit 1
+	echo "Failed to create jail"
+	exit 1
 fi
 rm /tmp/pkg.json
 
@@ -691,4 +621,3 @@ elif [ $SELFSIGNED_CERT -eq 1 ]; then
   echo "/usr/local/etc/pki/tls/certs/fullchain.pem"
   echo ""
 fi
-

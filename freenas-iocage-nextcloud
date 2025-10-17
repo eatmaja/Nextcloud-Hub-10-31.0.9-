@@ -1,7 +1,0 @@
-JAIL_IP="192.168.71.7"
-DEFAULT_GW_IP="192.168.71.1"
-POOL_PATH="/mnt/ekaNXT"
-TIME_ZONE="Asia/Jakarta"
-HOST_NAME="aisya.eatmaja.co.id"
-STANDALONE_CERT=1
-CERT_EMAIL="eka@eatmaja.co.id"
